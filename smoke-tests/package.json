@@ -21,9 +21,9 @@
     "@npmcli/eslint-config": "^4.0.0",
     "@npmcli/mock-registry": "^1.0.0",
     "@npmcli/promise-spawn": "^6.0.2",
-    "@npmcli/template-oss": "4.14.1",
+    "@npmcli/template-oss": "4.20.0",
     "http-proxy": "^1.18.1",
-    "tap": "^16.3.4",
+    "tap": "^18.0.0",
     "which": "^3.0.0"
   },
   "author": "GitHub Inc.",
