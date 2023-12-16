@@ -127,6 +127,7 @@ const {
   stop,
   registry,
   advisoryBulkResponse,
+  oneSocket,
 } = require('../fixtures/server.js')
 
 t.before(start)
@@ -159,6 +160,11 @@ const newArb = (opt) => new Arborist({
 
 const reify = (path, opt) => newArb({ path, ...(opt || {}) }).reify(opt)
 
+t.test('bundled file dep with same name as other dep', async t => {
+  const tree = await printReified(fixture(t, 'conflict-bundle-file-dep'))
+  t.matchSnapshot(tree)
+})
+
 t.test('tarball deps with transitive tarball deps', t =>
   t.resolveMatchSnapshot(printReified(fixture(t, 'tarball-dependencies'))))
 
@@ -170,7 +176,7 @@ t.test('update a yarn.lock file', async t => {
 })
 
 t.test('weirdly broken lockfile without resolved value', t =>
-  t.resolveMatchSnapshot(printReified(fixture(t, 'dep-missing-resolved'))))
+  t.resolveMatchSnapshot(printReified(fixture(t, 'dep-missing-resolved'), oneSocket(t))))
 
 t.test('testing-peer-deps package', t =>
   t.resolveMatchSnapshot(printReified(fixture(t, 'testing-peer-deps'))))
@@ -463,6 +469,18 @@ t.test('still do not install optional deps with mismatched platform specificatio
 
 t.test('fail to install deps with mismatched platform specifications', t =>
   t.rejects(printReified(fixture(t, 'platform-specification')), { code: 'EBADPLATFORM' }))
+
+t.test('success to install optional deps with matched platform specifications with os and cpu options', t =>
+  t.resolveMatchSnapshot(printReified(
+    fixture(t, 'optional-platform-specification'), { os: 'not-your-os', cpu: 'not-your-cpu' })))
+
+t.test('fail to install optional deps with matched os and mismatched cpu with os and cpu options', t =>
+  t.resolveMatchSnapshot(printReified(
+    fixture(t, 'optional-platform-specification'), { os: 'not-your-os', cpu: 'another-cpu' })))
+
+t.test('fail to install optional deps with mismatched os and matched cpu with os and cpu options', t =>
+  t.resolveMatchSnapshot(printReified(
+    fixture(t, 'optional-platform-specification'), { os: 'another-os', cpu: 'not-your-cpu' })))
 
 t.test('dry run, do not get anything wet', async t => {
   const cases = [
@@ -1187,6 +1205,55 @@ t.test('workspaces', t => {
   t.test('reify simple-workspaces', t =>
     t.resolveMatchSnapshot(printReified(fixture(t, 'workspaces-simple')), 'should reify simple workspaces'))
 
+  t.test('reify workspaces omit dev dependencies', async t => {
+    const runCase = async (t, opts) => {
+      const path = fixture(t, 'workspaces-conflicting-dev-deps')
+      const rootAjv = resolve(path, 'node_modules/ajv/package.json')
+      const ajvOfPkgA = resolve(path, 'a/node_modules/ajv/package.json')
+      const ajvOfPkgB = resolve(path, 'b/node_modules/ajv/package.json')
+
+      t.equal(fs.existsSync(rootAjv), true, 'root ajv exists')
+      t.equal(fs.existsSync(ajvOfPkgA), true, 'ajv under package a node_modules exists')
+      t.equal(fs.existsSync(ajvOfPkgB), true, 'ajv under package a node_modules exists')
+
+      await reify(path, { omit: ['dev'], ...opts })
+
+      return {
+        root: { exists: () => fs.existsSync(rootAjv) },
+        a: { exists: () => fs.existsSync(ajvOfPkgA) },
+        b: { exists: () => fs.existsSync(ajvOfPkgB) },
+      }
+    }
+
+    await t.test('default', async t => {
+      const { root, a, b } = await runCase(t)
+      t.equal(root.exists(), false, 'root')
+      t.equal(a.exists(), false, 'a')
+      t.equal(b.exists(), false, 'b')
+    })
+
+    await t.test('workspaces only', async t => {
+      const { root, a, b } = await runCase(t, { workspaces: ['a'] })
+      t.equal(root.exists(), false, 'root')
+      t.equal(a.exists(), false, 'a')
+      t.equal(b.exists(), true, 'b')
+    })
+
+    await t.test('workspaces + root', async t => {
+      const { root, a, b } = await runCase(t, { workspaces: ['a'], includeWorkspaceRoot: true })
+      t.equal(root.exists(), false, 'root')
+      t.equal(a.exists(), false, 'a')
+      t.equal(b.exists(), true, 'b')
+    })
+
+    await t.test('disable workspaces', async t => {
+      const { root, a, b } = await runCase(t, { workspacesEnabled: false })
+      t.equal(root.exists(), false, 'root')
+      t.equal(a.exists(), true, 'a')
+      t.equal(b.exists(), true, 'b')
+    })
+  })
+
   t.test('reify workspaces lockfile', async t => {
     const path = fixture(t, 'workspaces-simple')
     await reify(path)
@@ -1368,7 +1435,7 @@ t.test('do not reify root when root matches duplicated metadep', async t => {
 
 t.test('reify properly with all deps when lockfile is ancient', async t => {
   const path = fixture(t, 'sax')
-  const tree = await reify(path)
+  const tree = await reify(path, oneSocket(t))
   t.matchSnapshot(printTree(tree))
   fs.statSync(path + '/node_modules/tap/node_modules/.bin/nyc')
 })
